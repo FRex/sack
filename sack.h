@@ -1,7 +1,7 @@
 #ifndef SACK_H_INCLUDED
 #define SACK_H_INCLUDED
 
-#include <stddef.h>
+#include <stddef.h> /* for size_t */
 
 typedef struct sack {
     void ** ptrs;
@@ -10,13 +10,25 @@ typedef struct sack {
 
 } sack;
 
+/* must be called before any other functions are, wont alloc if initsize = 0 */
 int sack_init(sack * s, size_t initsize);
+
+/* frees all the pointers and then the table, idempotent */
 void sack_deinit(sack * s);
 
+/* grow the table to requested size, if allocation fails or if the given size
+   is less than or equal to current size returns 0, otherwise returns 1 */
 int sack_growto(sack * s, size_t newsize);
+
+/* adds the pointer to the table, might cause a sack_growto call if there is no
+   more space left, if that sack_growto call fails - returns 0, otherwise 1 */
 int sack_add(sack * s, void * ptr);
 
+/* ensures there is space for another ptr in the table by using sack_growto if
+   needed and then mallocs len bytes, returns NULL if either of these fails */
 void * sack_alloc(sack * s, size_t len);
+
+/* convenience wrappers around sack_alloc to deal with strings */
 char * sack_strdup(sack * s, const char * str);
 char * sack_strduplen(sack * s, const char * str, size_t len);
 
@@ -24,8 +36,8 @@ char * sack_strduplen(sack * s, const char * str, size_t len);
 
 #ifdef SACK_IMPLEMENTATION
 
-#include <stdlib.h>
-#include <string.h>
+#include <stdlib.h> /* for malloc, calloc, free and realloc */
+#include <string.h> /* for strlen and memcpy */
 
 int sack_init(sack * s, size_t initsize)
 {
