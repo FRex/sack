@@ -4,16 +4,24 @@
 #include <stddef.h> /* for size_t */
 
 typedef struct sack {
-    void ** ptrs;
-    size_t used;
-    size_t size;
+    void ** ptrs; /* pointers table to keep pointers to free in */
+    size_t used;  /* how many elements of ptrs table are used   */
+    size_t size;  /* how many void * elements are there in ptrs */
 
 } sack;
 
-/* must be called before any other functions are, wont alloc if initsize = 0 */
+/* must be called before any other functions are, wont alloc if initsize = 0,
+   not safe to call on already initialized sack that isn't empty - it will leak
+   the table and all pointers inside it, use sack_freeall or sack_deinit */
 int sack_init(sack * s, size_t initsize);
 
-/* frees all the pointers and then the table, idempotent */
+/* free all the pointers but keep the table so it can be reused, idempotent, not
+   safe to call on uninitialized sack (memset/calloc to 0 or sack_init first) */
+void sack_freepointers(sack * s);
+
+/* frees all the pointers and then the table, idempotent, sack is reusable
+   without needing to sack_init again, not safe to call on uninitialized sack
+   structure (memset/calloc it to 0 or call sack_init on it first) */
 void sack_deinit(sack * s);
 
 /* grow the table to requested size, if allocation fails or if the given size
@@ -31,6 +39,14 @@ void * sack_alloc(sack * s, size_t len);
 /* convenience wrappers around sack_alloc to deal with strings */
 char * sack_strdup(sack * s, const char * str);
 char * sack_strduplen(sack * s, const char * str, size_t len);
+
+/* allocates len block with sack_alloc and copies mem content into it, returns
+   NULL on failure, does not free mem in any way */
+void * sack_memdup(sack * s, const void * mem, size_t len);
+
+/* allocate newlen block with sack_alloc and then copy len bytes into it,
+   returns NULL on failure or if len > newlen, does not free mem in any way */
+void * sack_memdupmore(sack * s, const void * mem, size_t len, size_t newlen);
 
 #endif /* SACK_H_INCLUDED */
 
@@ -60,25 +76,29 @@ int sack_init(sack * s, size_t initsize)
     return 1;
 }
 
-void sack_deinit(sack * s)
+void sack_freepointers(sack * s)
 {
     size_t i;
 
     for(i = 0u; i < s->used; ++i)
         free(s->ptrs[i]);
 
-    s->size = 0u;
     s->used = 0u;
+}
+
+void sack_deinit(sack * s)
+{
+    sack_freepointers(s);
     free(s->ptrs);
+    s->size = 0u;
     s->ptrs = NULL;
 }
 
 int sack_growto(sack * s, size_t newsize)
 {
     void ** newptrs;
-    size_t i;
 
-    if(newsize <- s->size)
+    if(newsize < s->size)
         return 0;
 
     newptrs = (void**)realloc(s->ptrs, newsize * sizeof(void*));
@@ -86,9 +106,6 @@ int sack_growto(sack * s, size_t newsize)
         return 0;
 
     s->ptrs = newptrs;
-    for(i = s->size; i < newsize; ++i)
-        s->ptrs[i] = NULL;
-
     s->size = newsize;
     return 1;
 }
@@ -141,12 +158,35 @@ char * sack_strduplen(sack * s, const char * str, size_t len)
 {
     char * ret;
 
+    if(!str || len == 0u)
+        return NULL;
+
     ret = (char*)sack_alloc(s, len + 1);
     if(!ret)
         return NULL;
 
     memcpy(ret, str, len);
     ret[len] = '\0';
+    return ret;
+}
+
+void * sack_memdup(sack * s, const void * mem, size_t len)
+{
+    return sack_memdupmore(s, mem, len, len);
+}
+
+void * sack_memdupmore(sack * s, const void * mem, size_t len, size_t newlen)
+{
+    void * ret;
+
+    if(!mem || len == 0u || len > newlen)
+        return NULL;
+
+    ret = sack_alloc(s, newlen);
+    if(!ret)
+        return NULL;
+
+    memcpy(ret, mem, len);
     return ret;
 }
 
